@@ -1,0 +1,177 @@
+name: Terraform Infrastructure Deployment and EKS Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Choose whether to apply, destroy, deploy infrastructure'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    outputs:
+      no_changes: ${{ steps.check_changes.outputs.no_changes }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.4.6
+
+      - name: Check if Terraform Plan has changes
+        id: check_changes
+        run: |
+          terraform init
+          terraform plan -out=tfplan
+          
+          if terraform show -no-color ./terraform/tfplan | grep -q 'No changes'; then
+            echo "No changes detected. Skipping apply."
+            echo "no_changes=true" >> $GITHUB_ENV
+            echo "::set-output name=no_changes::true"
+          else
+            echo "Changes detected. Proceeding with apply."
+            echo "no_changes=false" >> $GITHUB_ENV
+            echo "::set-output name=no_changes::false"
+          fi
+        working-directory: ./terraform
+
+      - name: Debug no_changes variable
+        run: |
+          echo "No changes variable is: ${{ steps.check_changes.outputs.no_changes }}"
+
+      # Apply step is skipped if "destroy" action is selected
+      - name: Terraform Apply
+        if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
+        run: |
+          terraform apply -auto-approve ./terraform/tfplan
+        working-directory: ./terraform
+        env:
+          TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
+
+      - name: Capture Terraform Output
+        id: capture_output
+        run: |
+          echo "repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+        working-directory: ./terraform
+
+      - name: Update deployment.yaml with ECR URL
+        run: |
+          echo "Updating values.yaml with new repository URL"
+          sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
+        env:
+          REPOSITORY_URL: ${{ env.repository_url }}
+
+      - name: Commit changes to deployment.yaml
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add k8s/deployment.yaml
+          git commit -m "Update ECR repository URL in deployment.yaml"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: github.event.inputs.action == 'deploy'
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} |
+          docker login --username AWS --password-stdin ${{secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+
+      - name: Build Docker image
+        run: |
+          VERSION="1.0.0"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          IMAGE_TAG="${VERSION}-${TIMESTAMP}"
+
+          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG .
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG
+
+      - name: Update deployment.yaml with new image tag
+        run: |
+          VALUES_FILE="k8s/deployment.yaml"
+          echo "Updating deployment.yaml with new image tag: ${IMAGE_TAG}"
+
+          sed -i "s|repository:.*|repository: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app|g" $VALUES_FILE
+          sed -i "s|image: \".*:\(.*\)\"|image: \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG\"|g" $VALUES_FILE
+      - name: Commit and push changes to values.yaml
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add k8s/deployment.yaml
+          git commit -m "Update Docker image tag in values.yaml to $IMAGE_TAG"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Deploy Application
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+        working-directory: ./
+
+      - name: Wait for LoadBalancer to be provisioned
+        run: |
+          export ELB_DNS=$(kubectl get svc python-app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "ELB DNS name: $ELB_DNS"
+          echo "ELB_DNS=$ELB_DNS" >> $GITHUB_ENV
+
+      - name: Clone the repository to update DNS record
+        run: |
+          # Use sed to update the DNS record in the dns.tf file with the new ELB DNS
+          sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" terraform/dns.tf
+
+      - name: Apply Terraform Changes to Update CNAME Record
+        if: github.event.inputs.action == 'deploy'
+        run: |
+          terraform init
+          terraform plan -out=tfplan
+          terraform apply -auto-approve
+        working-directory: ./terraform
+
+      # Destroy step executed only when "destroy" action is selected
+      - name: Delete Kubernetes resources
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          kubectl delete -f k8s/deployment.yaml
+          # Add more kubectl delete commands here if needed
+      # Destroy step executed only when "destroy" action is selected
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          terraform destroy -auto-approve
+        working-directory: ./terraform
+        env:
+          TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
