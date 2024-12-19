@@ -38,9 +38,10 @@ jobs:
         id: check_changes
         run: |
           terraform init
+          terraform refresh
           terraform plan -out=tfplan
           terraform show -no-color ./tfplan > plan_output.txt
-          if grep -q 'No changes' plan_output.txt; then
+          if [ $? -eq 0 ]; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
             echo "::set-output name=no_changes::true"
@@ -87,12 +88,6 @@ jobs:
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
-      # Clean up any unnecessary files from the Terraform directory to avoid committing them
-      - name: Clean up Terraform files
-        run: |
-          rm -rf .terraform
-          rm -f terraform.tfstate terraform.tfstate.backup terraform.lock.hcl
 
   deploy:
     runs-on: ubuntu-latest
