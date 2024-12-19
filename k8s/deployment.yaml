@@ -15,7 +15,7 @@ spec:
     spec:
      containers:
         - name: python-app
-          image: "069653090426.dkr.ecr.ap-south-1.amazonaws.com/my-python-app:1.0.0-test"
+          image: "069653090426.dkr.ecr.ap-south-1.amazonaws.com/my-python-app:"
           ports:
             - containerPort: 5000
 ---
