@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       no_changes: ${{ steps.check_changes.outputs.no_changes }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v2
@@ -38,14 +37,9 @@ jobs:
         id: check_changes
         run: |
           terraform init
-        working-directory: ./terraformfiles
-      - name: Refresh Terraform state
-        run: terraform refresh
-        working-directory: ./terraformfiles
-      - name: Terraform Plan
-        run: |
           terraform plan -out=tfplan
-          if terraform show -no-color ./terraformfiles/tfplan | grep -q 'No changes'; then
+          terraform show -no-color ./tfplan > plan_output.txt
+          if grep -q 'No changes' plan_output.txt; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
             echo "::set-output name=no_changes::true"
@@ -56,15 +50,9 @@ jobs:
           fi
         working-directory: ./terraformfiles
 
-      - name: Debug no_changes variable
-        run: |
-          echo "No changes variable is: ${{ steps.check_changes.outputs.no_changes }}"
-
-      # Apply step is skipped if "destroy" action is selected
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
-          ls -lart .
           terraform apply -auto-approve ./tfplan
         working-directory: ./terraformfiles
         env:
@@ -84,7 +72,7 @@ jobs:
           echo "Updating values.yaml with new repository URL"
           sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
         env:
-          REPOSITORY_URL: ${{ env.repository_url }}
+          REPOSITORY_URL: ${{ env.ecr_url }}
 
       - name: Commit changes to deployment.yaml
         run: |
@@ -95,6 +83,12 @@ jobs:
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      # Clean up any unnecessary files from the Terraform directory to avoid committing them
+      - name: Clean up Terraform files
+        run: |
+          rm -rf .terraform
+          rm -f terraform.tfstate terraform.tfstate.backup terraform.lock.hcl
 
   deploy:
     runs-on: ubuntu-latest
@@ -118,14 +112,13 @@ jobs:
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} |
-          docker login --username AWS --password-stdin ${{secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
 
       - name: Build Docker image
         run: |
           VERSION="1.0.0"
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           IMAGE_TAG="${VERSION}-${TIMESTAMP}"
-
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG .
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG
 
@@ -133,9 +126,9 @@ jobs:
         run: |
           VALUES_FILE="k8s/deployment.yaml"
           echo "Updating deployment.yaml with new image tag: ${IMAGE_TAG}"
-
           sed -i "s|repository:.*|repository: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app|g" $VALUES_FILE
           sed -i "s|image: \".*:\(.*\)\"|image: \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG\"|g" $VALUES_FILE
+
       - name: Commit and push changes to values.yaml
         run: |
           git config user.name "GitHub Actions"
@@ -176,6 +169,7 @@ jobs:
         run: |
           kubectl delete -f k8s/deployment.yaml
           # Add more kubectl delete commands here if needed
+
       # Destroy step executed only when "destroy" action is selected
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
