@@ -179,10 +179,10 @@ jobs:
         working-directory: ./terraformfiles
 
       # Destroy step executed only when "destroy" action is selected
-      - name: Delete Kubernetes resources
-        if: github.event.inputs.action == 'destroy'
-        run: |
-          kubectl delete -f k8s/deployment.yaml
+      # - name: Delete Kubernetes resources
+      #   if: github.event.inputs.action == 'destroy'
+      #   run: |
+      #     kubectl delete -f k8s/deployment.yaml
           # Add more kubectl delete commands here if needed
 
       # Destroy step executed only when "destroy" action is selected
