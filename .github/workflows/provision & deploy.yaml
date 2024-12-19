@@ -111,14 +111,17 @@ jobs:
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Set up Docker Buildx
+        if: github.event.inputs.action == 'deploy'
         uses: docker/setup-buildx-action@v2
 
       - name: Log in to Amazon ECR
+        if: github.event.inputs.action == 'deploy'
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} |
           docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
 
       - name: Build Docker image
+        if: github.event.inputs.action == 'deploy'
         run: |
           VERSION="1.0.0"
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -127,6 +130,7 @@ jobs:
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG
 
       - name: Update deployment.yaml with new image tag
+        if: github.event.inputs.action == 'deploy'
         run: |
           VALUES_FILE="k8s/deployment.yaml"
           echo "Updating deployment.yaml with new image tag: ${IMAGE_TAG}"
@@ -134,9 +138,11 @@ jobs:
           sed -i "s|image: \".*:\(.*\)\"|image: \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG\"|g" $VALUES_FILE
 
       - name: Commit and push changes to values.yaml
+        if: github.event.inputs.action == 'deploy'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
           git add k8s/deployment.yaml
           git commit -m "Update Docker image tag in values.yaml to $IMAGE_TAG"
           git push
@@ -144,17 +150,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Deploy Application
+        if: github.event.inputs.action == 'deploy'
         run: |
           kubectl apply -f k8s/deployment.yaml
         working-directory: ./
 
       - name: Wait for LoadBalancer to be provisioned
+        if: github.event.inputs.action == 'deploy'
         run: |
           export ELB_DNS=$(kubectl get svc python-app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "ELB DNS name: $ELB_DNS"
           echo "ELB_DNS=$ELB_DNS" >> $GITHUB_ENV
 
       - name: Clone the repository to update DNS record
+        if: github.event.inputs.action == 'deploy'
         run: |
           # Use sed to update the DNS record in the dns.tf file with the new ELB DNS
           sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" terraformfiles/dns.tf
