@@ -60,7 +60,7 @@ jobs:
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
           ls -lart .
-          ls ./terraformfiles/tfplan
+          ls -l ./terraformfiles/
           terraform apply -auto-approve ./terraformfiles/tfplan
         working-directory: ./terraformfiles
         env:
