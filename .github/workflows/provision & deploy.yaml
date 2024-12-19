@@ -40,7 +40,7 @@ jobs:
           terraform init
           terraform plan -out=tfplan
           
-          if terraform show -no-color ./terraformfiles/tfplan | grep -q 'No changes'; then
+          if terraform show -no-color ./tfplan | grep -q 'No changes'; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
             echo "::set-output name=no_changes::true"
