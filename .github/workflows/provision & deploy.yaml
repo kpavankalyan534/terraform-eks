@@ -59,6 +59,7 @@ jobs:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
       - name: Extract ECR URL from Terraform State
+        if: github.event.inputs.action == 'apply'
         id: extract_ecr_url
         run: |
           # Extract the ECR URL using terraform show and jq
@@ -68,6 +69,7 @@ jobs:
           echo "ecr_url=$ecr_url" >> $GITHUB_ENV
 
       - name: Update deployment.yaml with ECR URL
+        if: github.event.inputs.action == 'apply'
         run: |
           echo "Updating values.yaml with new repository URL"
           sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
@@ -75,6 +77,7 @@ jobs:
           REPOSITORY_URL: ${{ env.ecr_url }}
 
       - name: Commit changes to deployment.yaml
+        if: github.event.inputs.action == 'apply'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
