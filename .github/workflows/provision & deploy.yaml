@@ -43,9 +43,8 @@ jobs:
         working-directory: ./terraformfiles
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: |
           terraform plan -out=tfplan
-          
           if terraform show -no-color ./tfplan | grep -q 'No changes'; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
