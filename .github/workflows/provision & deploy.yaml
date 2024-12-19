@@ -97,7 +97,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: terraform
-    if: github.event.inputs.action == 'deploy'
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy'
 
     steps:
       - name: Check out code
