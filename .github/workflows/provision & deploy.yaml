@@ -65,11 +65,14 @@ jobs:
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
-      - name: Capture Terraform Output
-        id: capture_output
+      - name: Extract ECR URL from Terraform State
+        id: extract_ecr_url
         run: |
-          echo "repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
-        working-directory: ./terraformfiles
+          # Extract the ECR URL using terraform show and jq
+          ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url')
+          
+          # Export the ECR URL as an environment variable
+          echo "ecr_url=$ecr_url" >> $GITHUB_ENV
 
       - name: Update deployment.yaml with ECR URL
         run: |
