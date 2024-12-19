@@ -38,10 +38,10 @@ jobs:
         id: check_changes
         run: |
           terraform init
+        working-directory: ./terraformfiles
       - name: Refresh Terraform state
         run: terraform refresh
         working-directory: ./terraformfiles
-
       - name: Terraform Plan
         run: |
           terraform plan -out=tfplan
