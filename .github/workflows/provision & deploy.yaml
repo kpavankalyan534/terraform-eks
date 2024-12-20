@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'Choose whether to apply, destroy, or deploy infrastructure'
+        description: 'Choose whether to apply, destroy, deploy infrastructure'
         required: true
         default: 'apply'
         type: choice
@@ -32,18 +32,17 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.4.6  # Adjust to your desired version
+          terraform_version: 1.4.6
 
-      # Initialize Terraform with the S3 backend configuration
-      - name: Terraform Init
-        run: |
-          terraform init
-      # Check if there are any changes to apply
       - name: Check if Terraform Plan has changes
         id: check_changes
         run: |
+          terraform init
+          ls -lart
           terraform refresh
+          ls -lart
           terraform plan -out=tfplan
+          ls -lart
           terraform show -no-color ./tfplan > plan_output.txt
           if [ $? -eq 0 ]; then
             echo "No changes detected. Skipping apply."
@@ -54,45 +53,46 @@ jobs:
             echo "no_changes=false" >> $GITHUB_ENV
             echo "::set-output name=no_changes::false"
           fi
+        # working-directory: ./terraformfiles
 
-      # Apply Terraform if changes are detected
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
+          ls
           terraform apply -auto-approve ./tfplan
+        # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
-      # Extract ECR URL from Terraform State and update Kubernetes Deployment
-      - name: Extract ECR URL from Terraform State
-        if: github.event.inputs.action == 'apply'
-        id: extract_ecr_url
-        run: |
-          ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
-          if [ -z "$ecr_url" ]; then
-            echo "Error: ECR URL not found!"
-            exit 1
-          fi
-          echo "ecr_url=$ecr_url" >> $GITHUB_ENV
+      # - name: Extract ECR URL from Terraform State
+      #   if: github.event.inputs.action == 'apply'
+      #   id: extract_ecr_url
+      #   run: |
+      #     ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
+      #     if [ -z "$ecr_url" ]; then
+      #       echo "Error: ECR URL not found!"
+      #       exit 1
+      #     fi
+      #     echo "ecr_url=$ecr_url" >> $GITHUB_ENV
 
-      - name: Update deployment.yaml with ECR URL
-        if: github.event.inputs.action == 'apply'
-        run: |
-          echo "Updating deployment.yaml with new ECR repository URL"
-          sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
-        env:
-          REPOSITORY_URL: ${{ env.ecr_url }}
+      # - name: Update deployment.yaml with ECR URL
+      #   if: github.event.inputs.action == 'apply'
+      #   run: |
+      #     echo "Updating values.yaml with new repository URL"
+      #     sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
+      #   env:
+      #     REPOSITORY_URL: ${{ env.ecr_url }}
 
-      - name: Commit changes to deployment.yaml
-        if: github.event.inputs.action == 'apply'
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add k8s/deployment.yaml
-          git commit -m "Update ECR repository URL in deployment.yaml"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      # - name: Commit changes to deployment.yaml
+      #   if: github.event.inputs.action == 'apply'
+      #   run: |
+      #     git config user.name "GitHub Actions"
+      #     git config user.email "actions@github.com"
+      #     git add k8s/deployment.yaml
+      #     git commit -m "Update ECR repository URL in deployment.yaml"
+      #     git push
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -110,19 +110,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
 
-      # Set up Docker Buildx for building images
       - name: Set up Docker Buildx
         if: github.event.inputs.action == 'deploy'
         uses: docker/setup-buildx-action@v2
 
-      # Log in to Amazon ECR for Docker image push
       - name: Log in to Amazon ECR
         if: github.event.inputs.action == 'deploy'
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} |
           docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
 
-      # Build and push Docker image to ECR
       - name: Build Docker image
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -132,7 +129,6 @@ jobs:
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG .
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG
 
-      # Update Kubernetes deployment.yaml with the new image tag
       - name: Update deployment.yaml with new image tag
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -141,32 +137,26 @@ jobs:
           sed -i "s|repository:.*|repository: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app|g" $VALUES_FILE
           sed -i "s|image: \".*:\(.*\)\"|image: \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG\"|g" $VALUES_FILE
 
-      # Commit changes to deployment.yaml
       - name: Commit and push changes to values.yaml
         if: github.event.inputs.action == 'deploy'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/your-org/your-repo.git
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
           git add k8s/deployment.yaml
           git commit -m "Update Docker image tag in values.yaml to $IMAGE_TAG"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
-      # Set up Kubeconfig for EKS
       - name: Set up Kubeconfig for EKS
         run: |
           aws eks --region ${{ secrets.AWS_DEFAULT_REGION }} update-kubeconfig --name ${{ secrets.TF_VAR_CLUSTER_NAME }}
-
-      # Deploy application to EKS
       - name: Deploy Application
         if: github.event.inputs.action == 'deploy'
         run: |
           kubectl apply -f k8s/deployment.yaml
         working-directory: ./
 
-      # Wait for LoadBalancer to be provisioned
       - name: Wait for LoadBalancer to be provisioned
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -174,32 +164,37 @@ jobs:
           echo "ELB DNS name: $ELB_DNS"
           echo "ELB_DNS=$ELB_DNS" >> $GITHUB_ENV
 
-      # Update DNS record in terraformfiles/dns.tf
       - name: Clone the repository to update DNS record
         if: github.event.inputs.action == 'deploy'
         run: |
+          # Use sed to update the DNS record in the dns.tf file with the new ELB DNS
           sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" terraformfiles/dns.tf
-
-      # Set up Terraform again for DNS CNAME update
-      - name: Set up Terraform for DNS Update
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.4.6  # Specify your desired version here
-
-      # Apply Terraform to update CNAME record in Route53
       - name: Apply Terraform Changes to Update CNAME Record
         if: github.event.inputs.action == 'deploy'
         run: |
           terraform init
           terraform plan -out=tfplan
           terraform apply -auto-approve
+        # working-directory: ./terraformfiles
 
-      # Terraform destroy step (if action is 'destroy')
+      # Destroy step executed only when "destroy" action is selected
+      # - name: Delete Kubernetes resources
+      #   if: github.event.inputs.action == 'destroy'
+      #   run: |
+      #     kubectl delete -f k8s/deployment.yaml
+          # Add more kubectl delete commands here if needed
+
+      # Destroy step executed only when "destroy" action is selected
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         run: |
           terraform init
           terraform plan -out=tfplan
           terraform destroy -auto-approve
+        # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
