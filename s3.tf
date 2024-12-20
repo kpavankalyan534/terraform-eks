@@ -3,7 +3,7 @@ resource "aws_s3_bucket" "terraform_state" {
   bucket = "pavan-terraform-state"  # Change to a unique name
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
