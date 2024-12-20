@@ -5,9 +5,6 @@
 *.tfstate
 *.tfstate.*
 # Ignore Terraform files
-.terraformfiles/
-*.tfstate
-*.tfstate.backup
 terraform.lock.hcl
 
 # Crash log files

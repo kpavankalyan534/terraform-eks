@@ -53,14 +53,14 @@ jobs:
             echo "no_changes=false" >> $GITHUB_ENV
             echo "::set-output name=no_changes::false"
           fi
-        working-directory: ./terraformfiles
+        # working-directory: ./terraformfiles
 
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
           ls
           terraform apply -auto-approve ./tfplan
-        working-directory: ./terraformfiles
+        # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
@@ -179,7 +179,7 @@ jobs:
           terraform init
           terraform plan -out=tfplan
           terraform apply -auto-approve
-        working-directory: ./terraformfiles
+        # working-directory: ./terraformfiles
 
       # Destroy step executed only when "destroy" action is selected
       # - name: Delete Kubernetes resources
@@ -195,6 +195,6 @@ jobs:
           terraform init
           terraform plan -out=tfplan
           terraform destroy -auto-approve
-        working-directory: ./terraformfiles
+        # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
