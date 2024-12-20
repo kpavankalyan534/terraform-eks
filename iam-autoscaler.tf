@@ -5,7 +5,7 @@ data "aws_iam_policy_document" "eks_cluster_autoscaler_assume_role_policy" {
 
     condition {
       test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
+      variable = replace(aws_iam_openid_connect_provider.eks.url, "https://", "") + ":sub"
       values   = ["system:serviceaccount:kube-system:cluster-autoscaler"]
     }
 
