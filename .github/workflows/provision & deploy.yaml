@@ -38,66 +38,61 @@ jobs:
         id: check_changes
         run: |
           terraform init
-          ls -lart
-          terraform refresh
-          ls -lart
-          terraform plan -out=tfplan
-          ls -lart
-          terraform show -no-color tfplan > plan_output.txt
-          # Check the exit code from terraform plan
-          if [ $? -eq 0 ]; then
+          terraform refresh  # Ensure state is updated before planning
+          
+          # Capture terraform plan output
+          terraform plan -out=tfplan > plan_output.txt
+          cat plan_output.txt  # Output the plan for debugging purposes
+
+          # Check if changes are detected in the plan
+          if grep -q "No changes." plan_output.txt; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
             echo "::set-output name=no_changes::true"
-          elif [ $? -eq 2 ]; then
+          else
             echo "Changes detected. Proceeding with apply."
             echo "no_changes=false" >> $GITHUB_ENV
             echo "::set-output name=no_changes::false"
-          else
-            echo "Error with Terraform plan."
-            exit 1
           fi
         # working-directory: ./terraformfiles
 
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
-          ls -lart
-          terraform apply -auto-approve ./tfplan
+         terraform apply "tfplan" -auto-approve
         # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
-      - name: Extract ECR URL from Terraform State
-        if: github.event.inputs.action == 'apply'
-        id: extract_ecr_url
-        run: |
-          ls -lart
-          ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
-          if [ -z "$ecr_url" ]; then
-            echo "Error: ECR URL not found!"
-            exit 1
-          fi
-          echo "ecr_url=$ecr_url" >> $GITHUB_ENV
+      # - name: Extract ECR URL from Terraform State
+      #   if: github.event.inputs.action == 'apply'
+      #   id: extract_ecr_url
+      #   run: |
+      #     ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
+      #     if [ -z "$ecr_url" ]; then
+      #       echo "Error: ECR URL not found!"
+      #       exit 1
+      #     fi
+      #     echo "ecr_url=$ecr_url" >> $GITHUB_ENV
 
-      - name: Update deployment.yaml with ECR URL
-        if: github.event.inputs.action == 'apply'
-        run: |
-          echo "Updating values.yaml with new repository URL"
-          sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
-        env:
-          REPOSITORY_URL: ${{ env.ecr_url }}
+      # - name: Update deployment.yaml with ECR URL
+      #   if: github.event.inputs.action == 'apply'
+      #   run: |
+      #     echo "Updating values.yaml with new repository URL"
+      #     sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
+      #   env:
+      #     REPOSITORY_URL: ${{ env.ecr_url }}
 
-      - name: Commit changes to deployment.yaml
-        if: github.event.inputs.action == 'apply'
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add k8s/deployment.yaml
-          git commit -m "Update ECR repository URL in deployment.yaml"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      # - name: Commit changes to deployment.yaml
+      #   if: github.event.inputs.action == 'apply'
+      #   run: |
+      #     git config user.name "GitHub Actions"
+      #     git config user.email "actions@github.com"
+      #     git add k8s/deployment.yaml
+      #     git commit -m "Update ECR repository URL in deployment.yaml"
+      #     git push
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   deploy:
     runs-on: ubuntu-latest
