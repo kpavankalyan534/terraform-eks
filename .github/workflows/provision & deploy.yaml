@@ -43,18 +43,6 @@ jobs:
           ls -lart
           terraform plan -out=tfplan
           ls -lart
-          terraform show -no-color ./tfplan > plan_output.txt
-          if [ $? -eq 0 ]; then
-            echo "No changes detected. Skipping apply."
-            echo "no_changes=true" >> $GITHUB_ENV
-            echo "::set-output name=no_changes::true"
-          else
-            echo "Changes detected. Proceeding with apply."
-            echo "no_changes=false" >> $GITHUB_ENV
-            echo "::set-output name=no_changes::false"
-          fi
-        # working-directory: ./terraformfiles
-
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
