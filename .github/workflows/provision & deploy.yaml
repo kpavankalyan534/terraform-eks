@@ -59,7 +59,7 @@ jobs:
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
-         terraform apply "tfplan" -auto-approve
+         terraform apply -auto-approve tfplan
         # working-directory: ./terraformfiles
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
