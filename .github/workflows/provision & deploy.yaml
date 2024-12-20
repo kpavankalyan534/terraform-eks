@@ -44,7 +44,7 @@ jobs:
           terraform plan -out=tfplan
           ls -lart
       - name: Terraform Apply
-        if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
+        if: github.event.inputs.action == 'apply'
         run: |
           ls
           terraform apply -auto-approve ./tfplan
