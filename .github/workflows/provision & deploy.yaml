@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'Choose whether to apply, destroy, deploy infrastructure'
+        description: 'Choose whether to apply, destroy, or deploy infrastructure'
         required: true
         default: 'apply'
         type: choice
@@ -17,10 +17,10 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     outputs:
-      tfplanExitCode: ${{ steps.tf-plan.outputs.exitcode }}
+      no_changes: ${{ steps.check_changes.outputs.no_changes }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v2
 
       - name: Set up AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -29,97 +29,76 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
         with:
-          terraform_wrapper: false
+          terraform_version: 1.4.6  # Adjust to your desired version
 
+      # Initialize Terraform with the S3 backend configuration
       - name: Terraform Init
-        run: terraform init
-
-      # - name: Terraform Format
-      #   run: terraform fmt -check
-
-      - name: Terraform Plan
-        id: tf-plan
         run: |
-          export exitcode=0
-          terraform plan -detailed-exitcode -no-color -out tfplan || export exitcode=$?
-          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
-          if [ $exitcode -eq 1 ]; then
-            echo "Terraform Plan Failed!"
-            exit 1
+          terraform init
+      # Check if there are any changes to apply
+      - name: Check if Terraform Plan has changes
+        id: check_changes
+        run: |
+          terraform refresh
+          terraform plan -out=tfplan
+          terraform show -no-color ./tfplan > plan_output.txt
+          if [ $? -eq 0 ]; then
+            echo "No changes detected. Skipping apply."
+            echo "no_changes=true" >> $GITHUB_ENV
+            echo "::set-output name=no_changes::true"
+          else
+            echo "Changes detected. Proceeding with apply."
+            echo "no_changes=false" >> $GITHUB_ENV
+            echo "::set-output name=no_changes::false"
           fi
-          
-      - name: Publish Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
 
-      - name: Create String Output
-        id: tf-plan-string
-        run: |
-          TERRAFORM_PLAN=$(terraform show -no-color tfplan)
-          delimiter="$(openssl rand -hex 8)"
-          echo "summary<<${delimiter}" >> $GITHUB_OUTPUT
-          echo "## Terraform Plan Output" >> $GITHUB_OUTPUT
-          echo "<details><summary>Click to expand</summary>" >> $GITHUB_OUTPUT
-          echo '```terraform' >> $GITHUB_OUTPUT
-          echo "$TERRAFORM_PLAN" >> $GITHUB_OUTPUT
-          echo '```' >> $GITHUB_OUTPUT
-          echo "</details>" >> $GITHUB_OUTPUT
-          echo "${delimiter}" >> $GITHUB_OUTPUT
-
-      - name: Publish Terraform Plan to Task Summary
-        env:
-          SUMMARY: ${{ steps.tf-plan-string.outputs.summary }}
-        run: echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
-
-      - name: Push Terraform Output to PR
-        if: github.ref != 'refs/heads/main'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GH_PAT }}
-          script: |
-            const body = `${process.env.SUMMARY}`;
-            github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: body
-            })
-
-  terraform-apply:
-    name: 'Terraform Apply'
-    if: github.ref == 'refs/heads/main' && needs.terraform.outputs.tfplanExitCode == 2
-    runs-on: ubuntu-latest
-    environment: production
-    needs: terraform
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-
+      # Apply Terraform if changes are detected
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
+        run: |
+          terraform apply -auto-approve ./tfplan
         env:
           TF_VAR_cluster_name: ${{ secrets.TF_VAR_CLUSTER_NAME }}
+
+      # Extract ECR URL from Terraform State and update Kubernetes Deployment
+      - name: Extract ECR URL from Terraform State
+        if: github.event.inputs.action == 'apply'
+        id: extract_ecr_url
+        run: |
+          ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
+          if [ -z "$ecr_url" ]; then
+            echo "Error: ECR URL not found!"
+            exit 1
+          fi
+          echo "ecr_url=$ecr_url" >> $GITHUB_ENV
+
+      - name: Update deployment.yaml with ECR URL
+        if: github.event.inputs.action == 'apply'
+        run: |
+          echo "Updating deployment.yaml with new ECR repository URL"
+          sed -i 's|image:.*|image: ${REPOSITORY_URL}|g' k8s/deployment.yaml
+        env:
+          REPOSITORY_URL: ${{ env.ecr_url }}
+
+      - name: Commit changes to deployment.yaml
+        if: github.event.inputs.action == 'apply'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add k8s/deployment.yaml
+          git commit -m "Update ECR repository URL in deployment.yaml"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   deploy:
     runs-on: ubuntu-latest
     needs: terraform
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy'
+
     steps:
       - name: Check out code
         uses: actions/checkout@v2
@@ -131,16 +110,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
 
+      # Set up Docker Buildx for building images
       - name: Set up Docker Buildx
         if: github.event.inputs.action == 'deploy'
         uses: docker/setup-buildx-action@v2
 
+      # Log in to Amazon ECR for Docker image push
       - name: Log in to Amazon ECR
         if: github.event.inputs.action == 'deploy'
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_DEFAULT_REGION }} |
           docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
 
+      # Build and push Docker image to ECR
       - name: Build Docker image
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -150,6 +132,7 @@ jobs:
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG .
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG
 
+      # Update Kubernetes deployment.yaml with the new image tag
       - name: Update deployment.yaml with new image tag
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -158,28 +141,32 @@ jobs:
           sed -i "s|repository:.*|repository: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app|g" $VALUES_FILE
           sed -i "s|image: \".*:\(.*\)\"|image: \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/my-python-app:$IMAGE_TAG\"|g" $VALUES_FILE
 
+      # Commit changes to deployment.yaml
       - name: Commit and push changes to values.yaml
         if: github.event.inputs.action == 'deploy'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/your-org/your-repo.git
           git add k8s/deployment.yaml
           git commit -m "Update Docker image tag in values.yaml to $IMAGE_TAG"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
+      # Set up Kubeconfig for EKS
       - name: Set up Kubeconfig for EKS
         run: |
           aws eks --region ${{ secrets.AWS_DEFAULT_REGION }} update-kubeconfig --name ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
+      # Deploy application to EKS
       - name: Deploy Application
         if: github.event.inputs.action == 'deploy'
         run: |
           kubectl apply -f k8s/deployment.yaml
         working-directory: ./
 
+      # Wait for LoadBalancer to be provisioned
       - name: Wait for LoadBalancer to be provisioned
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -187,16 +174,19 @@ jobs:
           echo "ELB DNS name: $ELB_DNS"
           echo "ELB_DNS=$ELB_DNS" >> $GITHUB_ENV
 
+      # Update DNS record in terraformfiles/dns.tf
       - name: Clone the repository to update DNS record
         if: github.event.inputs.action == 'deploy'
         run: |
           sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" terraformfiles/dns.tf
 
+      # Set up Terraform again for DNS CNAME update
       - name: Set up Terraform for DNS Update
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.4.6
+          terraform_version: 1.4.6  # Specify your desired version here
 
+      # Apply Terraform to update CNAME record in Route53
       - name: Apply Terraform Changes to Update CNAME Record
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -204,6 +194,7 @@ jobs:
           terraform plan -out=tfplan
           terraform apply -auto-approve
 
+      # Terraform destroy step (if action is 'destroy')
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         run: |
