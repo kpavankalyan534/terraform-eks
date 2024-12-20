@@ -38,27 +38,31 @@ jobs:
         id: check_changes
         run: |
           terraform init
-          ls
+          ls -lart
           terraform refresh
-          ls
+          ls -lart
           terraform plan -out=tfplan
-          ls
-          terraform show -no-color ./tfplan > plan_output.txt
+          ls -lart
+          terraform show -no-color tfplan > plan_output.txt
+          # Check the exit code from terraform plan
           if [ $? -eq 0 ]; then
             echo "No changes detected. Skipping apply."
             echo "no_changes=true" >> $GITHUB_ENV
             echo "::set-output name=no_changes::true"
-          else
+          elif [ $? -eq 2 ]; then
             echo "Changes detected. Proceeding with apply."
             echo "no_changes=false" >> $GITHUB_ENV
             echo "::set-output name=no_changes::false"
+          else
+            echo "Error with Terraform plan."
+            exit 1
           fi
         # working-directory: ./terraformfiles
 
       - name: Terraform Apply
         if: steps.check_changes.outputs.no_changes == 'false' && github.event.inputs.action == 'apply'
         run: |
-          ls
+          ls -lart
           terraform apply -auto-approve ./tfplan
         # working-directory: ./terraformfiles
         env:
@@ -68,6 +72,7 @@ jobs:
         if: github.event.inputs.action == 'apply'
         id: extract_ecr_url
         run: |
+          ls -lart
           ecr_url=$(terraform show -json | jq -r '.values.root_module.resources[] | select(.type=="aws_ecr_repository") | .values.repository_url // empty')
           if [ -z "$ecr_url" ]; then
             echo "Error: ECR URL not found!"
@@ -148,9 +153,11 @@ jobs:
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
       - name: Set up Kubeconfig for EKS
         run: |
           aws eks --region ${{ secrets.AWS_DEFAULT_REGION }} update-kubeconfig --name ${{ secrets.TF_VAR_CLUSTER_NAME }}
+          
       - name: Deploy Application
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -169,10 +176,12 @@ jobs:
         run: |
           # Use sed to update the DNS record in the dns.tf file with the new ELB DNS
           sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" terraformfiles/dns.tf
+          
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.4.6  # Specify your desired version here
+
       - name: Apply Terraform Changes to Update CNAME Record
         if: github.event.inputs.action == 'deploy'
         run: |
@@ -180,13 +189,6 @@ jobs:
           terraform plan -out=tfplan
           terraform apply -auto-approve
         # working-directory: ./terraformfiles
-
-      # Destroy step executed only when "destroy" action is selected
-      # - name: Delete Kubernetes resources
-      #   if: github.event.inputs.action == 'destroy'
-      #   run: |
-      #     kubectl delete -f k8s/deployment.yaml
-          # Add more kubectl delete commands here if needed
 
       # Destroy step executed only when "destroy" action is selected
       - name: Terraform Destroy
