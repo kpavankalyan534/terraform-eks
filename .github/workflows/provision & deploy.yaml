@@ -127,15 +127,14 @@ jobs:
       - name: Wait for LoadBalancer to be provisioned
         if: github.event.inputs.action == 'deploy'
         run: |
-          export ELB_DNS=$(kubectl get svc python-app-service -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-          echo "ELB DNS name: $ELB_DNS"
-          echo "ELB_DNS=$ELB_DNS" >> $GITHUB_ENV
+          export INGRESS_DNS=$(kubectl get ingress python-app-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "Ingress DNS name: $INGRESS_DNS"
+          echo "INGRESS_DNS=$INGRESS_DNS" >> $GITHUB_ENV
 
       - name: Clone the repository to update DNS record
         if: github.event.inputs.action == 'deploy'
         run: |
-          # Use sed to update the DNS record in the dns.tf file with the new ELB DNS
-          sed -i "s|records = \[.*\]|records = [\"${{ env.ELB_DNS }}\"]|g" ./dns.tf
+          sed -i "s|records = \[.*\]|records = [\"${{ env.INGRESS_DNS }}\"]|g" ./dns.tf
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
@@ -148,7 +147,7 @@ jobs:
           terraform init
           terraform plan -out=tfplan
           terraform apply -auto-approve
-        working-directory: ./terraformfiles
+        # working-directory: ./terraformfiles
 
       # Destroy step executed only when "destroy" action is selected
       - name: Terraform Destroy
