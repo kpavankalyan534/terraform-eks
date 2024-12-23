@@ -39,7 +39,7 @@ jobs:
           terraform init
           terraform refresh
           terraform plan -out=tfplan
-
+          
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
         run: |
@@ -84,7 +84,6 @@ jobs:
           # Build and push the Docker image to ECR
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
-
           # Set IMAGE_URI as an environment variable for later steps
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
@@ -102,10 +101,22 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          
+          # Fetch the latest changes from the remote repository
+          git fetch origin
+          
+          # Merge the changes from the remote `main` branch into the local branch
+          git merge origin/main --no-edit || true
+          
+          # Set remote URL with access token for pushing changes
           git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
+          
+          # Add and commit changes to deployment.yaml
           git add k8s/deployment.yaml
           git commit -m "Update Docker image tag in deployment.yaml to $IMAGE_URI"
-          git push
+          
+          # Push the changes to the remote repository
+          git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -122,7 +133,9 @@ jobs:
       - name: Wait for LoadBalancer to be provisioned
         if: github.event.inputs.action == 'apply'
         run: |
-          export INGRESS_DNS=$(kubectl get ingress python-app-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "Waiting for LoadBalancer to be provisioned..."
+          kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=5m
+          export INGRESS_DNS=$(kubectl get ingress python-app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Ingress DNS name: $INGRESS_DNS"
           echo "INGRESS_DNS=$INGRESS_DNS" >> $GITHUB_ENV
 
@@ -142,7 +155,7 @@ jobs:
           terraform init
           terraform plan -out=tfplan
           terraform apply -auto-approve
-
+          
       # Destroy step executed only when "destroy" action is selected
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
