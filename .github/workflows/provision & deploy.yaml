@@ -134,7 +134,7 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: |
           echo "Waiting for LoadBalancer to be provisioned..."
-          kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=1m
+          # kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=1m
           export INGRESS_DNS=$(kubectl get ingress python-app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Ingress DNS name: $INGRESS_DNS"
           echo "INGRESS_DNS=$INGRESS_DNS" >> $GITHUB_ENV
