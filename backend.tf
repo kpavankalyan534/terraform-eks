@@ -6,10 +6,4 @@ terraform {
     encrypt        = true
     dynamodb_table = "pk-terraform-state"
   }
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 3.0"
-    }
-  }
 }
