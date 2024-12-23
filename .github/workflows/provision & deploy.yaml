@@ -125,13 +125,13 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: |
           echo "Waiting for LoadBalancer to be provisioned..."
-          kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=5m
+          # kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=5m
           INGRESS_DNS=$(kubectl get ingress python-app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "not-ready")
-          if [ "$INGRESS_DNS" == "not-ready" ]; then
-            echo "Load balancer DNS not yet available."
-          else
-            echo "Ingress DNS name: $INGRESS_DNS"
-          fi
+          # if [ "$INGRESS_DNS" == "not-ready" ]; then
+          #   echo "Load balancer DNS not yet available."
+          # else
+          #   echo "Ingress DNS name: $INGRESS_DNS"
+          # fi
           echo "INGRESS_DNS=$INGRESS_DNS" >> $GITHUB_ENV
 
       - name: Clone the repository to update DNS record
