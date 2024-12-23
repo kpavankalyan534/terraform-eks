@@ -121,6 +121,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Set up Kubeconfig for EKS
+        if: github.event.inputs.action == 'apply'
         run: |
           aws eks --region ${{ secrets.AWS_DEFAULT_REGION }} update-kubeconfig --name ${{ secrets.TF_VAR_CLUSTER_NAME }}
 
