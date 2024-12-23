@@ -101,21 +101,11 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          
-          # Fetch the latest changes from the remote repository
           git fetch origin
-          
-          # Merge the changes from the remote `main` branch into the local branch
           git merge origin/main --no-edit || true
-          
-          # Set remote URL with access token for pushing changes
           git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
-          
-          # Add and commit changes to deployment.yaml
           git add k8s/deployment.yaml
           git commit -m "Update Docker image tag in deployment.yaml to $IMAGE_URI"
-          
-          # Push the changes to the remote repository
           git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
@@ -135,7 +125,7 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: |
           echo "Waiting for LoadBalancer to be provisioned..."
-          # kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=1m
+          kubectl wait --for=condition=ready ingress/python-app-ingress --timeout=1m
           export INGRESS_DNS=$(kubectl get ingress python-app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Ingress DNS name: $INGRESS_DNS"
           echo "INGRESS_DNS=$INGRESS_DNS" >> $GITHUB_ENV
@@ -144,7 +134,19 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: |
           sed -i "s|records = \[.*\]|records = [\"${{ env.INGRESS_DNS }}\"]|g" ./dns.tf
-
+      - name: Commit and push changes to deployment.yaml
+        if: github.event.inputs.action == 'apply'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git fetch origin
+          git merge origin/main --no-edit || true
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
+          git add ./dns.tf
+          git commit -m "Update DNS record value in dns.tf to $INGRESS_DNS"
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
