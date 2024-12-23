@@ -1,6 +1,6 @@
 # Define S3 Bucket
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = "pk-terraform-state"  # Change to a unique name
+  bucket = "test-terraform-state"  # Change to a unique name
 
   lifecycle {
     prevent_destroy = true
@@ -37,7 +37,7 @@ resource "aws_s3_bucket_public_access_block" "terraform_state" {
 
 # Create DynamoDB table for state locking
 resource "aws_dynamodb_table" "terraform_state" {
-  name         = "pk-terraform-state"
+  name         = "test-terraform-state"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
