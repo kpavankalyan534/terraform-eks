@@ -37,7 +37,7 @@ jobs:
         id: check_changes
         run: |
           terraform init
-          terraform refresh
+          # terraform refresh
           terraform plan -out=tfplan
           
       - name: Terraform Apply
