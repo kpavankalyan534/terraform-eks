@@ -8,5 +8,5 @@ resource "aws_route53_record" "python-app" {
   name    = "display"
   type    = "CNAME"
   ttl     = 300
-  records = [""]
+  records = ["k8s-default-pythonap-f9d328ed19-364369364.ap-south-1.elb.amazonaws.com"]
 }
