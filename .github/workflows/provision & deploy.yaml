@@ -96,19 +96,19 @@ jobs:
           # Update the image tag in the YAML file to the new image URI
           sed -i "s|image: \".*\"|image: \"$IMAGE_URI\"|g" $VALUES_FILE
 
-      - name: Commit and push changes to deployment.yaml
-        if: github.event.inputs.action == 'apply'
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git fetch origin
-          git merge origin/main --no-edit || true
-          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
-          git add k8s/deployment.yaml
-          git commit -m "Update Docker image tag in deployment.yaml to $IMAGE_URI"
-          git push origin main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      # - name: Commit and push changes to deployment.yaml
+      #   if: github.event.inputs.action == 'apply'
+      #   run: |
+      #     git config user.name "GitHub Actions"
+      #     git config user.email "actions@github.com"
+      #     git fetch origin
+      #     git merge origin/main --no-edit || true
+      #     git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/kpavankalyan534/terraform-eks.git
+      #     git add k8s/deployment.yaml
+      #     git commit -m "Update Docker image tag in deployment.yaml to $IMAGE_URI"
+      #     git push origin main
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Set up Kubeconfig for EKS
         if: github.event.inputs.action == 'apply'
